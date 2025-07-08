@@ -423,10 +423,18 @@ app.MapPut("/todolists/{id}", async (int id, UpdateTodoListRequest request, Clai
         return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
 
     var userId = GetCurrentUserId(user);
-    var todoList = await db.TodoLists.FirstOrDefaultAsync(tl => tl.Id == id && tl.OwnerId == userId);
+    
+    // TodoList'in kullanıcıya ait olduğunu veya partner'ın olduğunu kontrol et
+    var todoList = await db.TodoLists
+        .Include(tl => tl.Owner)
+        .FirstOrDefaultAsync(tl => tl.Id == id);
     
     if (todoList == null)
         return Results.NotFound();
+
+    var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
+    if (currentUser?.CoupleId == null || todoList.Owner.CoupleId != currentUser.CoupleId)
+        return Results.BadRequest("Bu todo list'e erişim yetkiniz yok.");
 
     todoList.Title = request.Title;
     todoList.Description = request.Description;
@@ -445,10 +453,18 @@ app.MapDelete("/todolists/{id}", async (int id, ClaimsPrincipal user, AppDbConte
         return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
 
     var userId = GetCurrentUserId(user);
-    var todoList = await db.TodoLists.FirstOrDefaultAsync(tl => tl.Id == id && tl.OwnerId == userId);
+    
+    // TodoList'in kullanıcıya ait olduğunu veya partner'ın olduğunu kontrol et
+    var todoList = await db.TodoLists
+        .Include(tl => tl.Owner)
+        .FirstOrDefaultAsync(tl => tl.Id == id);
     
     if (todoList == null)
         return Results.NotFound();
+
+    var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
+    if (currentUser?.CoupleId == null || todoList.Owner.CoupleId != currentUser.CoupleId)
+        return Results.BadRequest("Bu todo list'e erişim yetkiniz yok.");
 
     db.TodoLists.Remove(todoList);
     await db.SaveChangesAsync();
@@ -632,6 +648,66 @@ app.MapPut("/users/profile", async (UpdateProfileRequest request, ClaimsPrincipa
     return Results.Ok(new UserResponse(currentUser.Id, currentUser.Username, currentUser.ColorCode, currentUser.CreatedAt));
 })
 .WithName("UpdateProfile");
+
+// Partner overview - tüm partner bilgilerini, todo listelerini ve itemlerini tek seferde getir
+app.MapGet("/partner/overview", async (ClaimsPrincipal user, AppDbContext db) =>
+{
+    if (!IsAuthenticated(user))
+        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
+
+    var userId = GetCurrentUserId(user);
+    var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
+    
+    if (currentUser?.CoupleId == null)
+        return Results.BadRequest("Henüz bir couple'a ait değilsiniz.");
+
+    // Partner'ı bul (aynı couple'da olan diğer user)
+    var partner = await db.Users
+        .FirstOrDefaultAsync(u => u.CoupleId == currentUser.CoupleId && u.Id != userId);
+
+    if (partner == null)
+        return Results.BadRequest("Partner bulunamadı. Couple'da henüz başka bir kullanıcı yok.");
+
+    // Partner'ın todo listelerini ve itemlerini getir
+    var todoLists = await db.TodoLists
+        .Where(tl => tl.OwnerId == partner.Id)
+        .Include(tl => tl.TodoItems)
+        .OrderBy(tl => tl.CreatedAt)
+        .ToListAsync();
+
+    // Response oluştur
+    var todoListsWithItems = todoLists.Select(tl => new TodoListWithItemsResponse(
+        tl.Id,
+        tl.Title,
+        tl.Description,
+        tl.OwnerId,
+        tl.CreatedAt,
+        tl.UpdatedAt,
+        tl.TodoItems
+            .OrderBy(ti => ti.Order)
+            .Select(ti => new TodoItemResponse(
+                ti.Id,
+                ti.Title,
+                ti.Description,
+                ti.Status,
+                ti.Severity,
+                ti.Order,
+                ti.CreatedAt,
+                ti.UpdatedAt))
+            .ToList()
+    )).ToList();
+
+    var response = new PartnerOverviewResponse(
+        partner.Id,
+        partner.Username,
+        partner.ColorCode,
+        partner.CreatedAt,
+        todoListsWithItems
+    );
+
+    return Results.Ok(response);
+})
+.WithName("GetPartnerOverview");
 
 // Database migration
 using (var scope = app.Services.CreateScope())

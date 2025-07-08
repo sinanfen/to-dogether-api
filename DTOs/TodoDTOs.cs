@@ -12,6 +12,23 @@ public record TodoItemResponse(int Id, string Title, string Description, TodoSta
 
 public record UserResponse(int Id, string Username, string ColorCode, DateTime CreatedAt);
 
+// Partner overview için yeni DTO'lar
+public record TodoListWithItemsResponse(
+    int Id, 
+    string Title, 
+    string Description, 
+    int OwnerId, 
+    DateTime CreatedAt, 
+    DateTime UpdatedAt, 
+    List<TodoItemResponse> Items);
+
+public record PartnerOverviewResponse(
+    int Id, 
+    string Username, 
+    string ColorCode, 
+    DateTime CreatedAt, 
+    List<TodoListWithItemsResponse> TodoLists);
+
 public enum TodoStatus
 {
     Pending,
