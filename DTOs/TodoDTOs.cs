@@ -29,6 +29,16 @@ public record PartnerOverviewResponse(
     DateTime CreatedAt, 
     List<TodoListWithItemsResponse> TodoLists);
 
+// Dashboard istatistikleri için DTO
+public record CoupleDashboardStatsResponse(
+    int TotalTasks,
+    int CompletedToday, 
+    int PendingTasks,
+    int HighPriorityTasks,
+    int MyTasks,
+    int PartnerTasks,
+    string? PartnerUsername);
+
 public enum TodoStatus
 {
     Pending,

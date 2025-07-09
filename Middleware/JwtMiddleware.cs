@@ -1,3 +1,4 @@
+using Serilog;
 using System.Security.Claims;
 using to_dogether_api.Services;
 
@@ -27,4 +28,25 @@ public class JwtMiddleware
 
         await _next(context);
     }
-} 
+}
+
+public class RequestLoggingMiddleware
+{
+    private readonly RequestDelegate _next;
+
+    public RequestLoggingMiddleware(RequestDelegate next)
+    {
+        _next = next;
+    }
+
+    public async Task Invoke(HttpContext context)
+    {
+        var ip = context.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+        var method = context.Request.Method;
+        var path = context.Request.Path;
+
+        Log.Information("HTTP {Method} request received for {Path} from {IP}", method, path, ip);
+
+        await _next(context);
+    }
+}

@@ -87,6 +87,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseCors();
 app.UseMiddleware<JwtMiddleware>();
+app.UseMiddleware<RequestLoggingMiddleware>();
 
 // Root URL'yi Swagger'a yönlendir
 app.MapGet("/", () => Results.Redirect("/swagger"));
@@ -708,6 +709,68 @@ app.MapGet("/partner/overview", async (ClaimsPrincipal user, AppDbContext db) =>
     return Results.Ok(response);
 })
 .WithName("GetPartnerOverview");
+
+// Dashboard istatistikleri - couple bazlı task istatistikleri
+app.MapGet("/dashboard/stats", async (ClaimsPrincipal user, AppDbContext db) =>
+{
+    if (!IsAuthenticated(user))
+        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
+
+    var userId = GetCurrentUserId(user);
+    var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
+    
+    if (currentUser?.CoupleId == null)
+        return Results.BadRequest("Henüz bir couple'a ait değilsiniz.");
+
+    // Couple'daki tüm kullanıcıları bul
+    var coupleUsers = await db.Users
+        .Where(u => u.CoupleId == currentUser.CoupleId)
+        .ToListAsync();
+
+    var partner = coupleUsers.FirstOrDefault(u => u.Id != userId);
+    var coupleUserIds = coupleUsers.Select(u => u.Id).ToList();
+
+    // Couple'ın tüm todo item'lerini getir
+    var allTodoItems = await db.TodoItems
+        .Where(ti => db.TodoLists.Any(tl => tl.Id == ti.TodoListId && coupleUserIds.Contains(tl.OwnerId)))
+        .ToListAsync();
+
+    // Kullanıcının kendi task'leri
+    var myTodoItems = await db.TodoItems
+        .Where(ti => db.TodoLists.Any(tl => tl.Id == ti.TodoListId && tl.OwnerId == userId))
+        .ToListAsync();
+
+    // Partner'ın task'leri
+    var partnerTodoItems = allTodoItems.Except(myTodoItems).ToList();
+
+    // Bugünün tarihi (UTC)
+    var today = DateTime.UtcNow.Date;
+    var tomorrow = today.AddDays(1);
+
+    // İstatistikleri hesapla
+    var totalTasks = allTodoItems.Count;
+    var completedToday = allTodoItems.Count(ti => 
+        ti.Status == TodoStatus.Done && 
+        ti.UpdatedAt >= today && 
+        ti.UpdatedAt < tomorrow);
+    var pendingTasks = allTodoItems.Count(ti => ti.Status == TodoStatus.Pending);
+    var highPriorityTasks = allTodoItems.Count(ti => ti.Severity == TodoSeverity.High);
+    var myTasks = myTodoItems.Count;
+    var partnerTasks = partnerTodoItems.Count;
+
+    var response = new CoupleDashboardStatsResponse(
+        totalTasks,
+        completedToday,
+        pendingTasks,
+        highPriorityTasks,
+        myTasks,
+        partnerTasks,
+        partner?.Username
+    );
+
+    return Results.Ok(response);
+})
+.WithName("GetCoupleDashboardStats");
 
 // Database migration
 using (var scope = app.Services.CreateScope())
