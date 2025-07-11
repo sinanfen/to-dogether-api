@@ -6,6 +6,8 @@ public class TodoList
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public int OwnerId { get; set; }
+    public bool IsShared { get; set; } = false;
+    public string ColorCode { get; set; } = "#3B82F6"; // Default mavi
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     
