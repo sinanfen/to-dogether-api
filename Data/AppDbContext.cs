@@ -14,6 +14,7 @@ public class AppDbContext : DbContext
     public DbSet<TodoItem> TodoItems { get; set; }
     public DbSet<RefreshToken> RefreshTokens { get; set; }
     public DbSet<Couple> Couples { get; set; }
+    public DbSet<Activity> Activities { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -25,7 +26,13 @@ public class AppDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Username).IsRequired().HasMaxLength(50);
             entity.Property(e => e.Password).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.ColorCode).IsRequired().HasMaxLength(7); // #RRGGBB format
             entity.HasIndex(e => e.Username).IsUnique();
+            
+            entity.HasOne(e => e.Couple)
+                .WithMany(c => c.Users)
+                .HasForeignKey(e => e.CoupleId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         // TodoList configuration
@@ -77,20 +84,19 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.InviteToken).IsUnique();
         });
 
-        // User configuration update
-        modelBuilder.Entity<User>(entity =>
+        // Activity configuration
+        modelBuilder.Entity<Activity>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Username).IsRequired().HasMaxLength(50);
-            entity.Property(e => e.Password).IsRequired().HasMaxLength(100);
-            entity.Property(e => e.ColorCode).IsRequired().HasMaxLength(7); // #RRGGBB format
-            entity.HasIndex(e => e.Username).IsUnique();
+            entity.Property(e => e.EntityTitle).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Message).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.ActivityType).HasConversion<string>();
+            entity.Property(e => e.EntityType).HasConversion<string>();
             
-            entity.HasOne(e => e.Couple)
-                .WithMany(c => c.Users)
-                .HasForeignKey(e => e.CoupleId)
-                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
-
     }
 } 

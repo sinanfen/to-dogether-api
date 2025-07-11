@@ -40,7 +40,7 @@
    ```json
    {
      "ConnectionStrings": {
-       "DefaultConnection": "Host=localhost;Database=todogether;Username=your_username;Password=your_password"
+       "DefaultConnection": "Host=localhost;Database=ToDogetherDb;Username=your_username;Password=your_password"
      }
    }
    ```
