@@ -7,7 +7,7 @@ public class TodoItem
     public int Id { get; set; }
     public int TodoListId { get; set; }
     public string Title { get; set; } = string.Empty;
-    public string Description { get; set; } = string.Empty;
+    public string? Description { get; set; }
     public TodoStatus Status { get; set; } = TodoStatus.Pending;
     public TodoSeverity Severity { get; set; } = TodoSeverity.Medium;
     public int Order { get; set; }
