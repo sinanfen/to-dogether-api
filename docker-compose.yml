@@ -1,0 +1,55 @@
+services:
+  # PostgreSQL Database
+  to-dogether-db:
+    image: postgres:15-alpine
+    container_name: to-dogether-postgres
+    environment:
+      POSTGRES_DB: ToDogetherDb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - to-dogether-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # API Application
+  to-dogether-api:
+    image: to.dogether.api:latest
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=ToDogetherDb;Username=postgres;Password=postgres;    
+    networks:
+      - to-dogether-network
+      - traefik_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.to-dogether-api.rule=Host(`to-dogether-api.sinanfen.me`)"
+      - "traefik.http.routers.to-dogether-api.entrypoints=websecure"
+      - "traefik.http.routers.to-dogether-api.tls=true"
+      - "traefik.http.services.to-dogether-api.loadbalancer.server.port=8080"
+      - "traefik.docker.network=traefik_default"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  to-dogether-network:
+    driver: bridge
+  traefik_default:
+    external: true
