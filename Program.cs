@@ -26,6 +26,13 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<HashService>();
 
+// Authorization
+builder.Services.AddAuthentication("JWT")
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, JwtAuthenticationHandler>(
+        "JWT", options => { });
+
+builder.Services.AddAuthorization();
+
 // CORS
 builder.Services.AddCors(options =>
 {
@@ -86,11 +93,35 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors();
-app.UseMiddleware<JwtMiddleware>();
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseMiddleware<RequestLoggingMiddleware>();
 
 // Root URL'yi Swagger'a yönlendir
 app.MapGet("/", () => Results.Redirect("/swagger"));
+
+// Health check endpoint for Docker
+app.MapGet("/health", async (AppDbContext db) =>
+{
+    try
+    {
+        // Database bağlantısını test et
+        await db.Database.CanConnectAsync();
+        
+        return Results.Ok(new
+        {
+            status = "healthy",
+            timestamp = DateTime.UtcNow,
+            environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            database = "connected"
+        });
+    }
+    catch (Exception)
+    {
+        return Results.StatusCode(503);
+    }
+})
+.WithName("HealthCheck");
 
 // Helper function to get current user ID from JWT token
 int GetCurrentUserId(ClaimsPrincipal user)
@@ -99,10 +130,44 @@ int GetCurrentUserId(ClaimsPrincipal user)
     return userIdClaim != null ? int.Parse(userIdClaim.Value) : 0;
 }
 
-// Helper function to check if user is authenticated
-bool IsAuthenticated(ClaimsPrincipal user)
+// Helper function to create activity
+void CreateActivity(AppDbContext db, int userId, ActivityType activityType, EntityType entityType, int entityId, string entityTitle, string? customMessage = null)
 {
-    return user.Identity?.IsAuthenticated == true && GetCurrentUserId(user) > 0;
+    var message = customMessage ?? GenerateActivityMessage(activityType, entityType, entityTitle);
+    
+    var activity = new Activity
+    {
+        UserId = userId,
+        ActivityType = activityType,
+        EntityType = entityType,
+        EntityId = entityId,
+        EntityTitle = entityTitle,
+        Message = message,
+        CreatedAt = DateTime.UtcNow
+    };
+
+    db.Activities.Add(activity);
+}
+
+// Helper function to generate activity messages
+string GenerateActivityMessage(ActivityType activityType, EntityType entityType, string entityTitle)
+{
+    var entityName = entityType == EntityType.TodoList ? "list" : "task";
+    
+    return activityType switch
+    {
+        ActivityType.Created => $"Created new {entityName} \"{entityTitle}\"",
+        ActivityType.Updated => $"Updated {entityName} \"{entityTitle}\"",
+        ActivityType.Deleted => $"Deleted {entityName} \"{entityTitle}\"",
+        ActivityType.Completed => $"Completed \"{entityTitle}\"",
+        ActivityType.Reopened => $"Reopened \"{entityTitle}\"",
+        ActivityType.ItemAdded => $"Added item to \"{entityTitle}\"",
+        ActivityType.ItemUpdated => $"Updated item in \"{entityTitle}\"",
+        ActivityType.ItemDeleted => $"Deleted item from \"{entityTitle}\"",
+        ActivityType.ItemCompleted => $"Completed item in \"{entityTitle}\"",
+        ActivityType.ItemReopened => $"Reopened item in \"{entityTitle}\"",
+        _ => $"Modified {entityName} \"{entityTitle}\""
+    };
 }
 
 // Auth endpoints
@@ -343,9 +408,6 @@ app.MapPost("/auth/logout", async (RefreshTokenRequest request, AppDbContext db)
 // Protected endpoints - JWT token required
 app.MapGet("/users/me", (ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.Unauthorized();
-
     var userId = GetCurrentUserId(user);
     var currentUser = db.Users.FirstOrDefault(u => u.Id == userId);
 
@@ -354,30 +416,26 @@ app.MapGet("/users/me", (ClaimsPrincipal user, AppDbContext db) =>
 
     return Results.Ok(new UserResponse(currentUser.Id, currentUser.Username, currentUser.ColorCode, currentUser.CreatedAt));
 })
-.WithName("GetCurrentUser");
+.WithName("GetCurrentUser")
+.RequireAuthorization();
 
 // TodoList endpoints
 app.MapGet("/todolists", async (ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     var todoLists = await db.TodoLists
         .Where(tl => tl.OwnerId == userId)
         .OrderBy(tl => tl.CreatedAt)
-        .Select(tl => new TodoListResponse(tl.Id, tl.Title, tl.Description, tl.OwnerId, tl.CreatedAt, tl.UpdatedAt))
+        .Select(tl => new TodoListResponse(tl.Id, tl.Title, tl.Description, tl.OwnerId, tl.IsShared, tl.ColorCode, tl.CreatedAt, tl.UpdatedAt))
         .ToListAsync();
 
     return Results.Ok(todoLists);
 })
-.WithName("GetMyTodoLists");
+.WithName("GetMyTodoLists")
+.RequireAuthorization();
 
 app.MapGet("/todolists/partner", async (ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
     
@@ -387,18 +445,16 @@ app.MapGet("/todolists/partner", async (ClaimsPrincipal user, AppDbContext db) =
     var partnerTodoLists = await db.TodoLists
         .Where(tl => tl.Owner.CoupleId == currentUser.CoupleId && tl.OwnerId != userId)
         .OrderBy(tl => tl.CreatedAt)
-        .Select(tl => new TodoListResponse(tl.Id, tl.Title, tl.Description, tl.OwnerId, tl.CreatedAt, tl.UpdatedAt))
+        .Select(tl => new TodoListResponse(tl.Id, tl.Title, tl.Description, tl.OwnerId, tl.IsShared, tl.ColorCode, tl.CreatedAt, tl.UpdatedAt))
         .ToListAsync();
 
     return Results.Ok(partnerTodoLists);
 })
-.WithName("GetPartnerTodoLists");
+.WithName("GetPartnerTodoLists")
+.RequireAuthorization();
 
 app.MapPost("/todolists", async (CreateTodoListRequest request, ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
 
     var todoList = new TodoList
@@ -406,6 +462,8 @@ app.MapPost("/todolists", async (CreateTodoListRequest request, ClaimsPrincipal 
         OwnerId = userId,
         Title = request.Title,
         Description = request.Description,
+        IsShared = request.IsShared,
+        ColorCode = request.ColorCode,
         CreatedAt = DateTime.UtcNow,
         UpdatedAt = DateTime.UtcNow
     };
@@ -413,16 +471,18 @@ app.MapPost("/todolists", async (CreateTodoListRequest request, ClaimsPrincipal 
     db.TodoLists.Add(todoList);
     await db.SaveChangesAsync();
 
-    var response = new TodoListResponse(todoList.Id, todoList.Title, todoList.Description, todoList.OwnerId, todoList.CreatedAt, todoList.UpdatedAt);
+    // Activity kaydı
+    CreateActivity(db, userId, ActivityType.Created, EntityType.TodoList, todoList.Id, todoList.Title);
+    await db.SaveChangesAsync();
+
+    var response = new TodoListResponse(todoList.Id, todoList.Title, todoList.Description, todoList.OwnerId, todoList.IsShared, todoList.ColorCode, todoList.CreatedAt, todoList.UpdatedAt);
     return Results.Created($"/todolists/{todoList.Id}", response);
 })
-.WithName("CreateTodoList");
+.WithName("CreateTodoList")
+.RequireAuthorization();
 
 app.MapPut("/todolists/{id}", async (int id, UpdateTodoListRequest request, ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     
     // TodoList'in kullanıcıya ait olduğunu veya partner'ın olduğunu kontrol et
@@ -437,22 +497,30 @@ app.MapPut("/todolists/{id}", async (int id, UpdateTodoListRequest request, Clai
     if (currentUser?.CoupleId == null || todoList.Owner.CoupleId != currentUser.CoupleId)
         return Results.BadRequest("Bu todo list'e erişim yetkiniz yok.");
 
+    // Yetki kontrolü: Sadece owner veya shared list ise düzenleyebilir
+    if (todoList.OwnerId != userId && !todoList.IsShared)
+        return Results.BadRequest("Bu todo list'i düzenleme yetkiniz yok. Sadece okuma yapabilirsiniz.");
+
     todoList.Title = request.Title;
     todoList.Description = request.Description;
+    todoList.IsShared = request.IsShared;
+    todoList.ColorCode = request.ColorCode;
     todoList.UpdatedAt = DateTime.UtcNow;
 
     await db.SaveChangesAsync();
 
-    var response = new TodoListResponse(todoList.Id, todoList.Title, todoList.Description, todoList.OwnerId, todoList.CreatedAt, todoList.UpdatedAt);
+    // Activity kaydı
+    CreateActivity(db, userId, ActivityType.Updated, EntityType.TodoList, todoList.Id, todoList.Title);
+    await db.SaveChangesAsync();
+
+    var response = new TodoListResponse(todoList.Id, todoList.Title, todoList.Description, todoList.OwnerId, todoList.IsShared, todoList.ColorCode, todoList.CreatedAt, todoList.UpdatedAt);
     return Results.Ok(response);
 })
-.WithName("UpdateTodoList");
+.WithName("UpdateTodoList")
+.RequireAuthorization();
 
 app.MapDelete("/todolists/{id}", async (int id, ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     
     // TodoList'in kullanıcıya ait olduğunu veya partner'ın olduğunu kontrol et
@@ -467,19 +535,29 @@ app.MapDelete("/todolists/{id}", async (int id, ClaimsPrincipal user, AppDbConte
     if (currentUser?.CoupleId == null || todoList.Owner.CoupleId != currentUser.CoupleId)
         return Results.BadRequest("Bu todo list'e erişim yetkiniz yok.");
 
+    // Yetki kontrolü: Sadece owner veya shared list ise silebilir
+    if (todoList.OwnerId != userId && !todoList.IsShared)
+        return Results.BadRequest("Bu todo list'i silme yetkiniz yok. Sadece okuma yapabilirsiniz.");
+
+    // Activity kaydı (silmeden önce)
+    var todoListTitle = todoList.Title;
+    var todoListId = todoList.Id;
+
     db.TodoLists.Remove(todoList);
+    await db.SaveChangesAsync();
+
+    // Activity kaydı
+    CreateActivity(db, userId, ActivityType.Deleted, EntityType.TodoList, todoListId, todoListTitle);
     await db.SaveChangesAsync();
 
     return Results.NoContent();
 })
-.WithName("DeleteTodoList");
+.WithName("DeleteTodoList")
+.RequireAuthorization();
 
 // TodoItem endpoints
 app.MapGet("/todolists/{todoListId}/items", async (int todoListId, ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     
     // TodoList'in kullanıcıya ait olduğunu veya partner'ın olduğunu kontrol et
@@ -502,13 +580,11 @@ app.MapGet("/todolists/{todoListId}/items", async (int todoListId, ClaimsPrincip
 
     return Results.Ok(todoItems);
 })
-.WithName("GetTodoItems");
+.WithName("GetTodoItems")
+.RequireAuthorization();
 
 app.MapPost("/todolists/{todoListId}/items", async (int todoListId, CreateTodoItemRequest request, ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     
     // TodoList'in kullanıcıya ait olduğunu veya partner'ın olduğunu kontrol et
@@ -522,6 +598,10 @@ app.MapPost("/todolists/{todoListId}/items", async (int todoListId, CreateTodoIt
     var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
     if (currentUser?.CoupleId == null || todoList.Owner.CoupleId != currentUser.CoupleId)
         return Results.BadRequest("Bu todo list'e erişim yetkiniz yok.");
+
+    // Yetki kontrolü: Sadece owner veya shared list ise item ekleyebilir
+    if (todoList.OwnerId != userId && !todoList.IsShared)
+        return Results.BadRequest("Bu todo list'e item ekleme yetkiniz yok. Sadece okuma yapabilirsiniz.");
 
     // En yüksek order'ı bul
     var maxOrder = await db.TodoItems
@@ -543,16 +623,18 @@ app.MapPost("/todolists/{todoListId}/items", async (int todoListId, CreateTodoIt
     db.TodoItems.Add(todoItem);
     await db.SaveChangesAsync();
 
+    // Activity kaydı
+    CreateActivity(db, userId, ActivityType.ItemAdded, EntityType.TodoList, todoListId, todoList.Title, $"Added \"{todoItem.Title}\" to \"{todoList.Title}\"");
+    await db.SaveChangesAsync();
+
     var response = new TodoItemResponse(todoItem.Id, todoItem.Title, todoItem.Description, todoItem.Status, todoItem.Severity, todoItem.Order, todoItem.CreatedAt, todoItem.UpdatedAt);
     return Results.Created($"/todolists/{todoListId}/items/{todoItem.Id}", response);
 })
-.WithName("CreateTodoItem");
+.WithName("CreateTodoItem")
+.RequireAuthorization();
 
 app.MapPut("/todolists/{todoListId}/items/{itemId}", async (int todoListId, int itemId, UpdateTodoItemRequest request, ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     
     // TodoList'in kullanıcıya ait olduğunu veya partner'ın olduğunu kontrol et
@@ -567,10 +649,18 @@ app.MapPut("/todolists/{todoListId}/items/{itemId}", async (int todoListId, int 
     if (currentUser?.CoupleId == null || todoList.Owner.CoupleId != currentUser.CoupleId)
         return Results.BadRequest("Bu todo list'e erişim yetkiniz yok.");
 
+    // Yetki kontrolü: Sadece owner veya shared list ise item güncelleyebilir
+    if (todoList.OwnerId != userId && !todoList.IsShared)
+        return Results.BadRequest("Bu todo list'in itemlarını güncelleme yetkiniz yok. Sadece okuma yapabilirsiniz.");
+
     var todoItem = await db.TodoItems.FirstOrDefaultAsync(ti => ti.Id == itemId && ti.TodoListId == todoListId);
     
     if (todoItem == null)
         return Results.NotFound();
+
+    // Status değişikliği kontrolü
+    var oldStatus = todoItem.Status;
+    var newStatus = request.Status;
 
     todoItem.Title = request.Title;
     todoItem.Description = request.Description;
@@ -581,16 +671,34 @@ app.MapPut("/todolists/{todoListId}/items/{itemId}", async (int todoListId, int 
 
     await db.SaveChangesAsync();
 
+    // Activity kaydı - Status değişikliği varsa özel aktivite
+    if (oldStatus != newStatus)
+    {
+        if (newStatus == TodoStatus.Done)
+        {
+            CreateActivity(db, userId, ActivityType.ItemCompleted, EntityType.TodoList, todoListId, todoList.Title, $"Completed \"{todoItem.Title}\" in \"{todoList.Title}\"");
+        }
+        else if (oldStatus == TodoStatus.Done && newStatus == TodoStatus.Pending)
+        {
+            CreateActivity(db, userId, ActivityType.ItemReopened, EntityType.TodoList, todoListId, todoList.Title, $"Reopened \"{todoItem.Title}\" in \"{todoList.Title}\"");
+        }
+    }
+    else
+    {
+        // Normal güncelleme
+        CreateActivity(db, userId, ActivityType.ItemUpdated, EntityType.TodoList, todoListId, todoList.Title, $"Updated \"{todoItem.Title}\" in \"{todoList.Title}\"");
+    }
+    
+    await db.SaveChangesAsync();
+
     var response = new TodoItemResponse(todoItem.Id, todoItem.Title, todoItem.Description, todoItem.Status, todoItem.Severity, todoItem.Order, todoItem.CreatedAt, todoItem.UpdatedAt);
     return Results.Ok(response);
 })
-.WithName("UpdateTodoItem");
+.WithName("UpdateTodoItem")
+.RequireAuthorization();
 
 app.MapDelete("/todolists/{todoListId}/items/{itemId}", async (int todoListId, int itemId, ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     
     // TodoList'in kullanıcıya ait olduğunu veya partner'ın olduğunu kontrol et
@@ -605,24 +713,33 @@ app.MapDelete("/todolists/{todoListId}/items/{itemId}", async (int todoListId, i
     if (currentUser?.CoupleId == null || todoList.Owner.CoupleId != currentUser.CoupleId)
         return Results.BadRequest("Bu todo list'e erişim yetkiniz yok.");
 
+    // Yetki kontrolü: Sadece owner veya shared list ise item silebilir
+    if (todoList.OwnerId != userId && !todoList.IsShared)
+        return Results.BadRequest("Bu todo list'in itemlarını silme yetkiniz yok. Sadece okuma yapabilirsiniz.");
+
     var todoItem = await db.TodoItems.FirstOrDefaultAsync(ti => ti.Id == itemId && ti.TodoListId == todoListId);
     
     if (todoItem == null)
         return Results.NotFound();
 
+    // Activity kaydı (silmeden önce)
+    var todoItemTitle = todoItem.Title;
+
     db.TodoItems.Remove(todoItem);
+    await db.SaveChangesAsync();
+
+    // Activity kaydı
+    CreateActivity(db, userId, ActivityType.ItemDeleted, EntityType.TodoList, todoListId, todoList.Title, $"Deleted \"{todoItemTitle}\" from \"{todoList.Title}\"");
     await db.SaveChangesAsync();
 
     return Results.NoContent();
 })
-.WithName("DeleteTodoItem");
+.WithName("DeleteTodoItem")
+.RequireAuthorization();
 
 // Profile management
 app.MapPut("/users/profile", async (UpdateProfileRequest request, ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     var currentUser = await db.Users.FirstOrDefaultAsync(u => u.Id == userId);
 
@@ -648,14 +765,12 @@ app.MapPut("/users/profile", async (UpdateProfileRequest request, ClaimsPrincipa
 
     return Results.Ok(new UserResponse(currentUser.Id, currentUser.Username, currentUser.ColorCode, currentUser.CreatedAt));
 })
-.WithName("UpdateProfile");
+.WithName("UpdateProfile")
+.RequireAuthorization();
 
 // Partner overview - tüm partner bilgilerini, todo listelerini ve itemlerini tek seferde getir
 app.MapGet("/partner/overview", async (ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
     
@@ -708,14 +823,12 @@ app.MapGet("/partner/overview", async (ClaimsPrincipal user, AppDbContext db) =>
 
     return Results.Ok(response);
 })
-.WithName("GetPartnerOverview");
+.WithName("GetPartnerOverview")
+.RequireAuthorization();
 
 // Dashboard istatistikleri - couple bazlı task istatistikleri
 app.MapGet("/dashboard/stats", async (ClaimsPrincipal user, AppDbContext db) =>
 {
-    if (!IsAuthenticated(user))
-        return Results.BadRequest(new { message = "Geçersiz veya eksik JWT token." });
-
     var userId = GetCurrentUserId(user);
     var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
     
@@ -770,7 +883,54 @@ app.MapGet("/dashboard/stats", async (ClaimsPrincipal user, AppDbContext db) =>
 
     return Results.Ok(response);
 })
-.WithName("GetCoupleDashboardStats");
+.WithName("GetCoupleDashboardStats")
+.RequireAuthorization();
+
+// Recent activities - couple bazlı son aktiviteler
+app.MapGet("/activities/recent", async (ClaimsPrincipal user, AppDbContext db, int limit = 10) =>
+{
+    var userId = GetCurrentUserId(user);
+    var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
+    
+    if (currentUser?.CoupleId == null)
+        return Results.BadRequest("Henüz bir couple'a ait değilsiniz.");
+
+    // Couple'daki tüm kullanıcıları bul
+    var coupleUserIds = await db.Users
+        .Where(u => u.CoupleId == currentUser.CoupleId)
+        .Select(u => u.Id)
+        .ToListAsync();
+
+    // Son aktiviteleri getir
+    var activities = await db.Activities
+        .Where(a => coupleUserIds.Contains(a.UserId))
+        .Include(a => a.User)
+        .OrderByDescending(a => a.CreatedAt)
+        .Take(Math.Min(limit, 50)) // Max 50
+        .Select(a => new ActivityResponse(
+            a.Id,
+            a.UserId,
+            a.User.Username,
+            a.User.ColorCode,
+            a.ActivityType,
+            a.EntityType,
+            a.EntityId,
+            a.EntityTitle,
+            a.Message,
+            a.CreatedAt
+        ))
+        .ToListAsync();
+
+    // Toplam aktivite sayısı
+    var totalCount = await db.Activities
+        .Where(a => coupleUserIds.Contains(a.UserId))
+        .CountAsync();
+
+    var response = new RecentActivitiesResponse(activities, totalCount);
+    return Results.Ok(response);
+})
+.WithName("GetRecentActivities")
+.RequireAuthorization();
 
 // Database migration
 using (var scope = app.Services.CreateScope())
