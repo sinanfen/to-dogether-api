@@ -932,6 +932,24 @@ app.MapGet("/activities/recent", async (ClaimsPrincipal user, AppDbContext db, i
 .WithName("GetRecentActivities")
 .RequireAuthorization();
 
+// Kullanıcının couple'ının invite tokenini dönen endpoint
+app.MapGet("/couple/invite-token", async (ClaimsPrincipal user, AppDbContext db) =>
+{
+    var userId = GetCurrentUserId(user);
+    var currentUser = await db.Users.Include(u => u.Couple).FirstOrDefaultAsync(u => u.Id == userId);
+
+    if (currentUser?.CoupleId == null)
+        return Results.BadRequest("Henüz bir couple'a ait değilsiniz.");
+
+    var couple = currentUser.Couple;
+    if (couple == null)
+        return Results.BadRequest("Couple bulunamadı.");
+
+    return Results.Ok(new { inviteToken = couple.InviteToken });
+})
+.WithName("GetInviteToken")
+.RequireAuthorization();
+
 // Database migration
 using (var scope = app.Services.CreateScope())
 {
