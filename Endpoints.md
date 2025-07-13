@@ -461,6 +461,69 @@ No Content
 
 ---
 
+## Partner İşlemleri
+
+### Partner Genel Bakış
+**GET** `/partner/overview`
+
+Partner'ın tüm bilgilerini, todo listelerini ve itemlerini tek seferde getirir.
+
+**Headers:**
+```
+Authorization: Bearer <jwt_token>
+```
+
+**Durum 1: Partner Varsa (200 OK)**
+```json
+{
+  "id": 2,
+  "username": "partner_username",
+  "colorCode": "#EF4444",
+  "createdAt": "2024-01-15T10:30:00Z",
+  "todoLists": [
+    {
+      "id": 3,
+      "title": "Ev temizliği",
+      "description": "Haftalık temizlik listesi",
+      "ownerId": 2,
+      "createdAt": "2024-01-15T12:00:00Z",
+      "updatedAt": "2024-01-15T12:00:00Z",
+      "items": [
+        {
+          "id": 5,
+          "title": "Banyo temizliği",
+          "description": "Duşakabin ve lavabo temizliği",
+          "status": "Pending",
+          "severity": "Medium",
+          "order": 1,
+          "createdAt": "2024-01-15T12:00:00Z",
+          "updatedAt": "2024-01-15T12:00:00Z"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Durum 2: Partner Yoksa (200 OK)**
+```json
+{
+  "message": "Henüz partner'ınız yok. Invite token'ınızı paylaşarak partner'ınızı davet edebilirsiniz.",
+  "inviteToken": "abc123def456"
+}
+```
+
+**Hata Yanıtları:**
+- `400` - Geçersiz veya eksik JWT token
+- `400` - Henüz bir couple'a ait değilsiniz
+
+**Notlar:**
+- Partner yoksa invite token döner, böylece kullanıcı partner'ını davet edebilir
+- Partner varsa tüm todo listeleri ve itemleri ile birlikte döner
+- Response tipi partner'ın varlığına göre değişir
+
+---
+
 ## Veri Tipleri
 
 ### TodoStatus Enum

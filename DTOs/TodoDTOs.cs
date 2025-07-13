@@ -29,6 +29,10 @@ public record PartnerOverviewResponse(
     DateTime CreatedAt, 
     List<TodoListWithItemsResponse> TodoLists);
 
+public record NoPartnerResponse(
+    string Message,
+    string InviteToken);
+
 // Dashboard istatistikleri için DTO
 public record CoupleDashboardStatsResponse(
     int TotalTasks,

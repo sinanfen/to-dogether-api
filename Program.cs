@@ -781,8 +781,16 @@ app.MapGet("/partner/overview", async (ClaimsPrincipal user, AppDbContext db) =>
     var partner = await db.Users
         .FirstOrDefaultAsync(u => u.CoupleId == currentUser.CoupleId && u.Id != userId);
 
+    // Partner yoksa farklı response döndür
     if (partner == null)
-        return Results.BadRequest("Partner bulunamadı. Couple'da henüz başka bir kullanıcı yok.");
+    {
+        var couple = currentUser.Couple;
+        var noPartnerResponse = new NoPartnerResponse(
+            "Henüz partner'ınız yok. Invite token'ınızı paylaşarak partner'ınızı davet edebilirsiniz.",
+            couple?.InviteToken ?? ""
+        );
+        return Results.Ok(noPartnerResponse);
+    }
 
     // Partner'ın todo listelerini ve itemlerini getir
     var todoLists = await db.TodoLists
