@@ -152,21 +152,21 @@ void CreateActivity(AppDbContext db, int userId, ActivityType activityType, Enti
 // Helper function to generate activity messages
 string GenerateActivityMessage(ActivityType activityType, EntityType entityType, string entityTitle)
 {
-    var entityName = entityType == EntityType.TodoList ? "list" : "task";
+    var entityName = entityType == EntityType.TodoList ? "liste" : "görev";
     
     return activityType switch
     {
-        ActivityType.Created => $"Created new {entityName} \"{entityTitle}\"",
-        ActivityType.Updated => $"Updated {entityName} \"{entityTitle}\"",
-        ActivityType.Deleted => $"Deleted {entityName} \"{entityTitle}\"",
-        ActivityType.Completed => $"Completed \"{entityTitle}\"",
-        ActivityType.Reopened => $"Reopened \"{entityTitle}\"",
-        ActivityType.ItemAdded => $"Added item to \"{entityTitle}\"",
-        ActivityType.ItemUpdated => $"Updated item in \"{entityTitle}\"",
-        ActivityType.ItemDeleted => $"Deleted item from \"{entityTitle}\"",
-        ActivityType.ItemCompleted => $"Completed item in \"{entityTitle}\"",
-        ActivityType.ItemReopened => $"Reopened item in \"{entityTitle}\"",
-        _ => $"Modified {entityName} \"{entityTitle}\""
+        ActivityType.Created => $"Yeni {entityName} oluşturuldu: \"{entityTitle}\"",
+        ActivityType.Updated => $"{entityName} güncellendi: \"{entityTitle}\"",
+        ActivityType.Deleted => $"{entityName} silindi: \"{entityTitle}\"",
+        ActivityType.Completed => $"Tamamlandı: \"{entityTitle}\"",
+        ActivityType.Reopened => $"Yeniden açıldı: \"{entityTitle}\"",
+        ActivityType.ItemAdded => $"Öğe eklendi: \"{entityTitle}\"",
+        ActivityType.ItemUpdated => $"Öğe güncellendi: \"{entityTitle}\"",
+        ActivityType.ItemDeleted => $"Öğe silindi: \"{entityTitle}\"",
+        ActivityType.ItemCompleted => $"Öğe tamamlandı: \"{entityTitle}\"",
+        ActivityType.ItemReopened => $"Öğe yeniden açıldı: \"{entityTitle}\"",
+        _ => $"{entityName} değiştirildi: \"{entityTitle}\""
     };
 }
 
@@ -425,7 +425,7 @@ app.MapGet("/todolists", async (ClaimsPrincipal user, AppDbContext db) =>
     var userId = GetCurrentUserId(user);
     var todoLists = await db.TodoLists
         .Where(tl => tl.OwnerId == userId)
-        .OrderBy(tl => tl.CreatedAt)
+        .OrderByDescending(tl => tl.CreatedAt)
         .Select(tl => new TodoListResponse(tl.Id, tl.Title, tl.Description, tl.OwnerId, tl.IsShared, tl.ColorCode, tl.CreatedAt, tl.UpdatedAt))
         .ToListAsync();
 
@@ -444,7 +444,7 @@ app.MapGet("/todolists/partner", async (ClaimsPrincipal user, AppDbContext db) =
 
     var partnerTodoLists = await db.TodoLists
         .Where(tl => tl.Owner.CoupleId == currentUser.CoupleId && tl.OwnerId != userId)
-        .OrderBy(tl => tl.CreatedAt)
+        .OrderByDescending(tl => tl.CreatedAt)
         .Select(tl => new TodoListResponse(tl.Id, tl.Title, tl.Description, tl.OwnerId, tl.IsShared, tl.ColorCode, tl.CreatedAt, tl.UpdatedAt))
         .ToListAsync();
 
@@ -574,7 +574,7 @@ app.MapGet("/todolists/{todoListId}/items", async (int todoListId, ClaimsPrincip
 
     var todoItems = await db.TodoItems
         .Where(ti => ti.TodoListId == todoListId)
-        .OrderBy(ti => ti.Order)
+        .OrderByDescending(ti => ti.CreatedAt)
         .Select(ti => new TodoItemResponse(ti.Id, ti.Title, ti.Description, ti.Status, ti.Severity, ti.Order, ti.CreatedAt, ti.UpdatedAt))
         .ToListAsync();
 
@@ -624,7 +624,7 @@ app.MapPost("/todolists/{todoListId}/items", async (int todoListId, CreateTodoIt
     await db.SaveChangesAsync();
 
     // Activity kaydı
-    CreateActivity(db, userId, ActivityType.ItemAdded, EntityType.TodoList, todoListId, todoList.Title, $"Added \"{todoItem.Title}\" to \"{todoList.Title}\"");
+    CreateActivity(db, userId, ActivityType.ItemAdded, EntityType.TodoList, todoListId, todoList.Title, $"\"{todoItem.Title}\" öğesi \"{todoList.Title}\" listesine eklendi");
     await db.SaveChangesAsync();
 
     var response = new TodoItemResponse(todoItem.Id, todoItem.Title, todoItem.Description, todoItem.Status, todoItem.Severity, todoItem.Order, todoItem.CreatedAt, todoItem.UpdatedAt);
@@ -676,17 +676,17 @@ app.MapPut("/todolists/{todoListId}/items/{itemId}", async (int todoListId, int 
     {
         if (newStatus == TodoStatus.Done)
         {
-            CreateActivity(db, userId, ActivityType.ItemCompleted, EntityType.TodoList, todoListId, todoList.Title, $"Completed \"{todoItem.Title}\" in \"{todoList.Title}\"");
+            CreateActivity(db, userId, ActivityType.ItemCompleted, EntityType.TodoList, todoListId, todoList.Title, $"\"{todoItem.Title}\" öğesi \"{todoList.Title}\" listesinde tamamlandı");
         }
         else if (oldStatus == TodoStatus.Done && newStatus == TodoStatus.Pending)
         {
-            CreateActivity(db, userId, ActivityType.ItemReopened, EntityType.TodoList, todoListId, todoList.Title, $"Reopened \"{todoItem.Title}\" in \"{todoList.Title}\"");
+            CreateActivity(db, userId, ActivityType.ItemReopened, EntityType.TodoList, todoListId, todoList.Title, $"\"{todoItem.Title}\" öğesi \"{todoList.Title}\" listesinde yeniden açıldı");
         }
     }
     else
     {
         // Normal güncelleme
-        CreateActivity(db, userId, ActivityType.ItemUpdated, EntityType.TodoList, todoListId, todoList.Title, $"Updated \"{todoItem.Title}\" in \"{todoList.Title}\"");
+        CreateActivity(db, userId, ActivityType.ItemUpdated, EntityType.TodoList, todoListId, todoList.Title, $"\"{todoItem.Title}\" öğesi \"{todoList.Title}\" listesinde güncellendi");
     }
     
     await db.SaveChangesAsync();
@@ -729,7 +729,7 @@ app.MapDelete("/todolists/{todoListId}/items/{itemId}", async (int todoListId, i
     await db.SaveChangesAsync();
 
     // Activity kaydı
-    CreateActivity(db, userId, ActivityType.ItemDeleted, EntityType.TodoList, todoListId, todoList.Title, $"Deleted \"{todoItemTitle}\" from \"{todoList.Title}\"");
+    CreateActivity(db, userId, ActivityType.ItemDeleted, EntityType.TodoList, todoListId, todoList.Title, $"\"{todoItemTitle}\" öğesi \"{todoList.Title}\" listesinden silindi");
     await db.SaveChangesAsync();
 
     return Results.NoContent();
@@ -796,7 +796,7 @@ app.MapGet("/partner/overview", async (ClaimsPrincipal user, AppDbContext db) =>
     var todoLists = await db.TodoLists
         .Where(tl => tl.OwnerId == partner.Id)
         .Include(tl => tl.TodoItems)
-        .OrderBy(tl => tl.CreatedAt)
+        .OrderByDescending(tl => tl.CreatedAt)
         .ToListAsync();
 
     // Response oluştur
@@ -808,7 +808,7 @@ app.MapGet("/partner/overview", async (ClaimsPrincipal user, AppDbContext db) =>
         tl.CreatedAt,
         tl.UpdatedAt,
         tl.TodoItems
-            .OrderBy(ti => ti.Order)
+            .OrderByDescending(ti => ti.CreatedAt)
             .Select(ti => new TodoItemResponse(
                 ti.Id,
                 ti.Title,
