@@ -52,8 +52,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<TodoItem>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
-            entity.Property(e => e.Description).HasMaxLength(1000);
+            entity.Property(e => e.Title).IsRequired();
+            entity.Property(e => e.Description).IsRequired(false);
             entity.Property(e => e.Status).HasConversion<string>();
             entity.Property(e => e.Severity).HasConversion<string>();
             
