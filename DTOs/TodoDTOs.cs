@@ -71,4 +71,24 @@ public enum TodoSeverity
     Low,
     Medium,
     High
-} 
+}
+
+// Search DTOs
+public record TodoListSearchResponse(List<TodoListResponse> Results, int TotalCount);
+public record TodoItemSearchResponse(List<TodoItemWithListResponse> Results, int TotalCount);
+public record TodoItemWithListResponse(
+    int Id, 
+    string Title, 
+    string? Description, 
+    TodoStatus Status, 
+    TodoSeverity Severity, 
+    int Order, 
+    DateTime CreatedAt, 
+    DateTime UpdatedAt,
+    int TodoListId,
+    string TodoListTitle,
+    string TodoListColorCode);
+
+// Reorder DTO
+public record ReorderTodoItemsRequest(List<ReorderItem> Items);
+public record ReorderItem(int ItemId, int NewOrder); 
